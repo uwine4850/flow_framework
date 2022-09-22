@@ -4,3 +4,10 @@ SERVER_PORT = 8888
 APPS = [
 
 ]
+
+DATABASE = {
+    'host': 'localhost',
+    'user': 'project',
+    'password': '1111',
+    'database': 'flow_db'
+}

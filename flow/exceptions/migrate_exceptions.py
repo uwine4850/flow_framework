@@ -80,3 +80,21 @@ class ErrorValidation(FlowException):
         else:
             self.msg = 'Validation error.'
         super().__init__(self.msg)
+
+
+class CreationError(FlowException):
+    def __init__(self, msg: str = None):
+        if msg:
+            self.msg = msg
+        else:
+            self.msg = 'Creation error.'
+        super().__init__(self.msg)
+
+
+class ApplyValidationError(FlowException):
+    def __init__(self, msg: str = None):
+        if msg:
+            self.msg = msg
+        else:
+            self.msg = 'Apply validation error.'
+        super().__init__(self.msg)

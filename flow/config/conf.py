@@ -23,40 +23,43 @@ APP_FILES: list[TemplateFile] = [
 ]
 
 
-class DefTableName(Enum):
+class DefLogTable(Enum):
     appaply = '_appaply'
     flow_tables = '_flow_tables'
     flow_fields = '_flow_fields'
 
 
-_appaplyquery = f"CREATE TABLE `{DATABASE['database']}`.`{DefTableName.appaply.value}`" \
+_appaplyquery = f"CREATE TABLE `{DATABASE['database']}`.`{DefLogTable.appaply.value}`" \
                 f" ( `id` INT NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`), " \
                 f" `appname` VARCHAR(300) NOT NULL ," \
                 f" `filename` VARCHAR(300) NOT NULL )"
 
-_flowtablesquery = f"CREATE TABLE `{DATABASE['database']}`.`{DefTableName.flow_tables.value}`" \
+_flowtablesquery = f"CREATE TABLE `{DATABASE['database']}`.`{DefLogTable.flow_tables.value}`" \
                 f" ( `id` INT NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`), " \
                 f" `tn` VARCHAR(300) NOT NULL ," \
                 f" `action` VARCHAR(300) NOT NULL, " \
                 f" `applystatus` BOOLEAN NOT NULL DEFAULT '0' )"
 
-_flowfieldsquery = f"CREATE TABLE `{DATABASE['database']}`.`{DefTableName.flow_fields.value}`" \
+_flowfieldsquery = f"CREATE TABLE `{DATABASE['database']}`.`{DefLogTable.flow_fields.value}`" \
                 f" ( `id` INT NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`), " \
                 f" `parent_table` INT NOT NULL ," \
                 f" `fname` VARCHAR(300) NOT NULL, " \
                 f" `ftype` VARCHAR(300) NOT NULL," \
                 f" `fk` VARCHAR(300) NULL," \
+                f" `on_delete` VARCHAR(300) NULL," \
+                f" `on_update` VARCHAR(300) NULL," \
+                f" `rel_name` VARCHAR(300) NULL," \
                 f" `flength` INT NOT NULL," \
                 f" `fnull` BOOLEAN NOT NULL," \
                 f" `action` VARCHAR(300) NOT NULL, " \
                 f" `applystatus` BOOLEAN NOT NULL DEFAULT '0' );" \
 
-_flowfields_fk = f"ALTER TABLE `{DefTableName.flow_fields.value}` ADD FOREIGN KEY (`parent_table`) REFERENCES " \
-                   f"`{DefTableName.flow_tables.value}`(`id`)" \
+_flowfields_fk = f"ALTER TABLE `{DefLogTable.flow_fields.value}` ADD FOREIGN KEY (`parent_table`) REFERENCES " \
+                   f"`{DefLogTable.flow_tables.value}`(`id`)" \
                    f" ON DELETE CASCADE ON UPDATE RESTRICT; "
 
 DEFAULT_TABLES: dict[str: list] = {
-    DefTableName.appaply.value: [_appaplyquery],
-    DefTableName.flow_tables.value: [_flowtablesquery],
-    DefTableName.flow_fields.value: [_flowfieldsquery, _flowfields_fk]
+    DefLogTable.appaply.value: [_appaplyquery],
+    DefLogTable.flow_tables.value: [_flowtablesquery],
+    DefLogTable.flow_fields.value: [_flowfieldsquery, _flowfields_fk]
 }

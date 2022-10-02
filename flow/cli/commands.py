@@ -67,7 +67,7 @@ class Command:
         Migrate(models_dict)
 
     def applymigrations(self):
-        ApplyMigrations()
+        ApplyMigrations().apply()
 
 
 fire.Fire(Command())

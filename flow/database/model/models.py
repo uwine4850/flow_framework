@@ -1,147 +1,146 @@
 from enum import Enum
 import importlib
 from fconfig.fsettings import APPS
-from flow.config.conf import DefLogTable, DEFAULT_TABLES
+from flow.config import conf as cfg
 import os
 import datetime
 from typing import Type
 from flow.exceptions.migrate_exceptions import ErrorWritingToFile, ErrorAddingTableToLog, ErrorAddingFieldToLog,\
     ErrorUpdateFieldInLog, ErrorDeleteFieldInLog, ErrorDeleteTableInLog, ErrorValidation, CreationError, ApplyValidationError
+from abc import ABCMeta, abstractmethod
+from flow.database.model import fields as dbfields_
 
 
-class FieldType(Enum):
-    INT = 'INT'
-    FK = 'FK'
-    CHAR = 'VARCHAR'
-    AUTOINCREMENT = 'AUTOI'
-
-
-class FieldAction(Enum):
-    DELETE = 'DELETE'
-    UPDATE = 'UPDATE'
-    CREATE = 'CREATE'
-    NOACTION = 'NOACTION'
-
-
-class RelationAction(Enum):
-    CASCADE = 'CASCADE'
-    RESTRICT = 'RESTRICT'
-    SETNULL = 'SETNULL'
-    NOACTION = 'NOACTION'
-
-
-# розділити на 2
-class _Field:
-    def __init__(self):
-        self.fname: str = ''
-        self.ftype: FieldType = None
-        self.flength: int = 0
-        self.fk: str = None
-        self.on_delete: RelationAction = None
-        self.on_update: RelationAction = None
-        self.rel_name = None
-        self.fnull: bool = False
-        self.action: FieldAction = None
-
-    def get_strbuild(self) -> str:
+class _DbConnGetData(metaclass=ABCMeta):
+    @abstractmethod
+    def all(self):
         pass
 
-    def set_action(self, action: FieldAction):
-        self.action = action
-        return self
-
-    def set_fname(self, fname: str):
-        self.fname = fname
-        return self
-
-    @staticmethod
-    def fnull_to_sql_bollean(fnull):
-        if fnull:
-            return 1
-        else:
-            return 0
+    @abstractmethod
+    def get(self, **kwargs):
+        pass
 
 
-class AutoIncrementField(_Field):
-    def __init__(self):
-        super().__init__()
-        self.ftype = FieldType.AUTOINCREMENT
-
-    def get_strbuild(self) -> str:
-        return f'AutoIncrementField()'
+class _DbConnActionData(metaclass=ABCMeta):
+    @abstractmethod
+    def create(self, **kwargs):
+        pass
 
 
-class ForeignKey(_Field):
-    def __init__(self, fk: str, on_delete: RelationAction, on_update: RelationAction = RelationAction.RESTRICT, rel_name='', fnull: bool = False):
-        super().__init__()
-        self.on_delete = on_delete
-        self.on_update = on_update
-        self.ftype = FieldType.FK
-        self.fk = fk
-        self.fnull = fnull
-        if rel_name:
-            self.rel_name = rel_name
+class FkDbConnect(_DbConnGetData):
+    def __init__(self, tn: str, rel_table_name: str, field_data, str_fields: list[str] = None):
+        from flow.database.query import DbQuery
 
-    def get_strbuild(self) -> str:
-        if self.fk:
-            return f"ForeignKey(fk='{self.fk}', fnull={self.fnull}, " \
-                   f"on_delete=models2.{self.on_delete}, on_update=models2.{self.on_update}, rel_name='{self.rel_name}')"
-        else:
-            return f'ForeignKey(fnull={self.fnull})'
+        self._str_fields = str_fields
+        self._query = DbQuery()
+        self._tn = tn
+        self.rel_table_name = rel_table_name
+        self.field_data = field_data
 
+    def __repr__(self):
+        return f"FkDbConnect({self._tn})"
 
-class IntField(_Field):
-    def __init__(self, flength: int = 0, fnull: bool = False):
-        super().__init__()
-        self.ftype = FieldType.INT
-        self.flength = flength
-        self.fnull = fnull
+    def all(self):
+        queryset = []
+        self._query.select_from(self.rel_table_name, '*', f"id = {self.field_data}")
+        for field in self._query.select_from(self.rel_table_name, '*', f"id = {self.field_data}",
+                                             list_format=False, dictionary=True):
+            queryset.append(QuerySet(field, self.rel_table_name, self._str_fields))
+        return queryset
 
-    def get_strbuild(self) -> str:
-        if self.flength:
-            return f'IntField(flength={self.flength}, fnull={self.fnull})'
-        else:
-            return f'IntField(fnull={self.fnull})'
+    def get(self, **kwargs):
+        key = list(kwargs.keys())[0]
+        return QuerySet(self._query.select_from(self.rel_table_name, '*', f"id = {self.field_data} and {key} = {kwargs[key]}",
+                                                list_format=False, dictionary=True)[0], self.rel_table_name)
 
 
-class CharField(_Field):
-    def __init__(self, flength: int, fnull: bool = False):
-        super().__init__()
-        self.ftype = FieldType.CHAR
-        self.flength = flength
-        self.fnull = fnull
+class ModelDbConnect(_DbConnGetData, _DbConnActionData):
+    """
+    Підключення до конкретної таблиці бази даних.
+    """
+    def __init__(self, tn: str, str_fields: list[str]):
+        from flow.database.query import DbQuery
 
-    def get_strbuild(self) -> str:
-        return f'CharField(flength={self.flength}, fnull={self.fnull})'
+        self._str_fields = str_fields
+        self._query = DbQuery()
+        self._tn = tn
+
+    def __repr__(self):
+        return f"ModelDbConnect({self._tn})"
+
+    def all(self):
+        queryset = []
+        for field in self._query.select_from(self._tn, '*', list_format=False, dictionary=True):
+            queryset.append(QuerySet(field, self._tn, self._str_fields))
+        return queryset
+
+    def get(self, **kwargs):
+        key = list(kwargs.keys())[0]
+        data = self._query.select_from(self._tn, '*', f"{key} = {kwargs[key]}", list_format=False, dictionary=True)
+        if data:
+            data = data[0]
+        return QuerySet(data, self._tn, self._str_fields)
+
+    def create(self, **kwargs):
+        self._query.insert_data(self._tn, insert_values_to_str(**kwargs))
 
 
-class DelField(_Field):
-    def __init__(self):
-        super().__init__()
-        self.action = FieldAction.DELETE
+class QuerySet:
+    """
+    Результат запиту до бази даних. Представляє один рядок таблиці.
+    """
+    def __init__(self, field: dict, table_name: str, str_fields: list[str] = None):
+        from flow.database.query import DbQuery
 
-    def get_strbuild(self) -> str:
-        return f"DelField()"
+        self._str_fields = str_fields
+        self._query = DbQuery()
+        self.table_name = table_name
+        self._field = field
+        self._set_fields()
 
+    def __repr__(self):
+        if self._str_fields:
+            fstr = f'{self.table_name}('
+            for x, i in enumerate(self._str_fields):
+                if x == len(self._str_fields)-1:
+                    fstr += f"{i}:{str(self.__getattribute__(i))})"
+                else:
+                    fstr += f"{i}:{str(self.__getattribute__(i))}|"
+            return f"QuerySet[{fstr}]"
+        return f"QuerySet[{self.table_name}]"
 
-class _UndefinedField(_Field):
-    def __init__(self):
-        super().__init__()
-        self.fk = None
+    def _set_fields(self):
+        for f in self._field:
+            ptid = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id', f"tn = '{self.table_name}'")[0]
+            ftype = self._query.select_from(cfg.DefLogTable.flow_fields.value, 'ftype, fk', f"fname = '{f}' and parent_table = {ptid}",
+                                            list_format=False, dictionary=True)[0]
+            if ftype['ftype'] == dbfields_.FieldType.FK.value:
+                self.__setattr__(f, FkDbConnect(self.table_name, ftype['fk'], self._field[f]))
+            else:
+                self.__setattr__(f, self._field[f])
 
+    def update(self, **kwargs):
+        self._query.update_data(self.table_name, update_value_to_str(**kwargs), f"id={self.id}")
 
-class DefaultModelFields:
-    fields = {
-        'id': AutoIncrementField()
-    }
+    def delete(self):
+        self._query.delete_field(self.table_name, f"id={self.id}")
 
 
 class Model:
-    _default_model_fields = [DefaultModelFields.fields]
+    """
+    Модель бази даних.
+    """
+    model_display_field: list[str] = None
+
+    @property
+    def db(self):
+        return ModelDbConnect(self.__class__.__name__.lower(), self.model_display_field)
+
+    _default_model_fields = [dbfields_.DefaultModelFields.fields]
 
     def set_default_fields(self, def_fields: list):
         self._default_model_fields = def_fields
-        DefaultModelFields.fields = def_fields
+        dbfields_.DefaultModelFields.fields = def_fields
 
     def init_model(self):
         self._set_fields_name()
@@ -149,7 +148,7 @@ class Model:
 
     def get_fields(self):
         return [self.__class__.__dict__[i] for i in self.__class__.__dict__ if not i.endswith('__')
-                and not i.startswith('__')]
+                and not i.startswith('__') and i != 'model_display_field']
 
     def _set_fields_name(self):
         # default field
@@ -159,7 +158,8 @@ class Model:
 
         fieldsname = [i for i in self.__class__.__dict__ if not i.endswith('__') and not i.startswith('__')]
         for fieldname in fieldsname:
-            self.__class__.__dict__[fieldname].set_fname(fieldname)
+            if fieldname != 'model_display_field':
+                self.__class__.__dict__[fieldname].set_fname(fieldname)
 
 
 class MigrateModel:
@@ -168,13 +168,13 @@ class MigrateModel:
     default_fields = [
 
     ]
-    action: FieldAction = None
+    action: dbfields_.FieldAction = None
     name: str = ''
-    fields: list[_Field] = [
+    fields: list[dbfields_._Field] = [
 
     ]
 
-    def new_instance(self, name: str, fields: list[_Field] = None):
+    def new_instance(self, name: str, fields: list[dbfields_._Field] = None):
         self.name = name
         if fields:
             self.fields = fields
@@ -200,9 +200,9 @@ class Migrate:
         """
 
         # check default tables
-        for dtab in DEFAULT_TABLES:
+        for dtab in cfg.DEFAULT_TABLES:
             if not dtab in self._query.show_tables():
-                for query in DEFAULT_TABLES[dtab]:
+                for query in cfg.DEFAULT_TABLES[dtab]:
                     self._query.custom_query(query)
 
         # init models
@@ -224,7 +224,7 @@ class Migrate:
                 for model in self.models_dict[app]:
                     migrate_model = MigrateModel().new_instance(model.__name__.lower(), model().get_fields())
                     CreateMgrFramework(model=migrate_model, filepath=filepath, filename=filename, first_mgr=True)\
-                        .set_default_fields([IntField().set_fname('id').set_action(FieldAction.CREATE)])\
+                        .set_default_fields([dbfields_.IntField().set_fname('id').set_action(dbfields_.FieldAction.CREATE)])\
                         .create()
                 applylog.append_table_in_log(app, filename)
 
@@ -250,7 +250,7 @@ class Migrate:
                 for mgr_model in mgr_models:
                     if mgr_model.name in [i.__name__.lower() for i in self.models_dict[app]]:
                         CreateMgrFramework(model=mgr_model, filepath=filepath, filename=filename) \
-                            .set_default_fields([IntField().set_fname('id').set_action(FieldAction.CREATE)]) \
+                            .set_default_fields([dbfields_.IntField().set_fname('id').sdbfields_.et_action(dbfields_.FieldAction.CREATE)]) \
                             .create()
                         applylog.append_table_in_log(app, filename)
 
@@ -259,7 +259,7 @@ class Migrate:
                 _InsertMgrData().update_log()
 
         # якщо створених таблиць не знайдено, створити їх (перша міграція).
-        if not self._query.select_from(DefLogTable.flow_tables.value, '*'):
+        if not self._query.select_from(cfg.DefLogTable.flow_tables.value, '*'):
             _InsertMgrData().insert_tables()
             _InsertMgrData().insert_fields()
 
@@ -300,22 +300,22 @@ class _MigrateValidation:
 
         for m_model in self.migrate_models:
             try:
-                if not m_model.name in self._query.select_from(DefLogTable.flow_tables.value, 'tn'):
-                    m_model.action = FieldAction.CREATE
+                if not m_model.name in self._query.select_from(cfg.DefLogTable.flow_tables.value, 'tn'):
+                    m_model.action = dbfields_.FieldAction.CREATE
             except Exception:
                 raise ErrorValidation(f"Table creation validation error.")
 
-        for tn in self._query.select_from(DefLogTable.flow_tables.value, 'tn'):
+        for tn in self._query.select_from(cfg.DefLogTable.flow_tables.value, 'tn'):
             if not tn in [i.name for i in self.migrate_models]:
                 try:
                     # створення поля для позначення видалення і mgr_models == True
                     del_mgrmodel = MigrateModel().new_instance(tn)
-                    uf = _UndefinedField()
-                    uf.action = _UndefinedField().set_action(FieldAction.NOACTION)
+                    uf = dbfields_.UndefinedField()
+                    uf.action = dbfields_.UndefinedField().set_action(dbfields_.FieldAction.NOACTION)
                     del_mgrmodel.fields.append(uf)
                     self.migrate_models.append(del_mgrmodel)
 
-                    table = self._query.select_from(DefLogTable.flow_tables.value, 'id, applystatus', f"tn = '{tn}'", list_format=False,
+                    table = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id, applystatus', f"tn = '{tn}'", list_format=False,
                                                     dictionary=True)[0]
 
                     _InsertMgrData.delete_table(table)
@@ -328,17 +328,17 @@ class _MigrateValidation:
         curfieldname = ''
         try:
             tn_ids = {}
-            for tn in self._query.select_from(DefLogTable.flow_tables.value, 'tn'):
-                tn_ids[tn] = self._query.select_from(DefLogTable.flow_tables.value, 'id', f"tn = '{tn}'")[0]
+            for tn in self._query.select_from(cfg.DefLogTable.flow_tables.value, 'tn'):
+                tn_ids[tn] = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id', f"tn = '{tn}'")[0]
 
             for tn in tn_ids:
                 for i in self.migrate_models:
                     if i.name == tn:
-                        table_fields = self._query.select_from(DefLogTable.flow_fields.value, 'fname', f"parent_table = '{tn_ids[tn]}'")
+                        table_fields = self._query.select_from(cfg.DefLogTable.flow_fields.value, 'fname', f"parent_table = '{tn_ids[tn]}'")
                         for tf in table_fields:
                             curfieldname = tf
                             if not tf in [j.fname for j in i.fields]:
-                                i.fields.append(DelField().set_fname(tf))
+                                i.fields.append(dbfields_.DelField().set_fname(tf))
         except Exception:
             raise ErrorValidation(f"Error validating deletion of field '{curfieldname}'.")
 
@@ -346,46 +346,46 @@ class _MigrateValidation:
         curfieldname = ''
         try:
             tn_ids = {}
-            for tn in self._query.select_from(DefLogTable.flow_tables.value, 'tn'):
-                tn_ids[tn] = self._query.select_from(DefLogTable.flow_tables.value, 'id', f"tn = '{tn}'")[0]
+            for tn in self._query.select_from(cfg.DefLogTable.flow_tables.value, 'tn'):
+                tn_ids[tn] = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id', f"tn = '{tn}'")[0]
 
             for model in self.migrate_models:
                 for tn in tn_ids:
                     if model.name == tn:
                         for field in model.fields:
                             curfieldname = field.fname
-                            flowfields = self._query.select_from(DefLogTable.flow_fields.value, 'fname, action', f"parent_table = '{tn_ids[tn]}'",
+                            flowfields = self._query.select_from(cfg.DefLogTable.flow_fields.value, 'fname, action', f"parent_table = '{tn_ids[tn]}'",
                                                              list_format=False, dictionary=True)
                             if not field.fname in [i['fname'] for i in flowfields]:
-                                field.action = FieldAction.CREATE
+                                field.action = dbfields_.FieldAction.CREATE
                             else:
                                 for dfield in flowfields:
                                     if field.fname == dfield['fname']:
-                                        if dfield['action'] == FieldAction.DELETE.value:
-                                            field.action = FieldAction.CREATE
+                                        if dfield['action'] == dbfields_.FieldAction.DELETE.value:
+                                            field.action = dbfields_.FieldAction.CREATE
                 if not model.name in tn_ids:
                     for field in model.fields:
-                        field.action = FieldAction.CREATE
+                        field.action = dbfields_.FieldAction.CREATE
         except Exception:
             raise ErrorValidation(f"Validation failed to create field '{curfieldname}'.")
 
     def _update_fields_validaton(self):
         tn_ids = {}
-        for tn in self._query.select_from(DefLogTable.flow_tables.value, 'tn'):
-            tn_ids[tn] = self._query.select_from(DefLogTable.flow_tables.value, 'id', f"tn = '{tn}'")[0]
+        for tn in self._query.select_from(cfg.DefLogTable.flow_tables.value, 'tn'):
+            tn_ids[tn] = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id', f"tn = '{tn}'")[0]
 
         for model in self.migrate_models:
             for tn in tn_ids:
                 if model.name == tn:
                     for field in model.fields:
                         try:
-                            if field.fname in self._query.select_from(DefLogTable.flow_fields.value, 'fname', f"parent_table = '{tn_ids[tn]}'"):
+                            if field.fname in self._query.select_from(cfg.DefLogTable.flow_fields.value, 'fname', f"parent_table = '{tn_ids[tn]}'"):
                                 field_data = self._query.custom_query(
-                                    f"SELECT * FROM {DefLogTable.flow_fields.value} WHERE `parent_table` = '{tn_ids[tn]}' AND "
+                                    f"SELECT * FROM {cfg.DefLogTable.flow_fields.value} WHERE `parent_table` = '{tn_ids[tn]}' AND "
                                     f"`fname` = '{field.fname}'", dictionary=True)[0]
-                                undef_field = _UndefinedField()
+                                undef_field = dbfields_.UndefinedField()
                                 for fd in field_data:
-                                    exclude = list(DefaultModelFields.fields.keys()) + ['parent_table', 'applystatus', 'action']
+                                    exclude = list(dbfields_.DefaultModelFields.fields.keys()) + ['parent_table', 'applystatus', 'action']
                                     if not fd in exclude:
                                         if field_data[fd] == 'None':
                                             undef_field.__setattr__(fd, None)
@@ -395,7 +395,7 @@ class _MigrateValidation:
                                 field_attr = [i for i in field.__dict__]
                                 field_attr.remove('fname')
                                 if field_values_to_dict(field) != field_values_to_dict(undef_field):
-                                    field.action = FieldAction.UPDATE
+                                    field.action = dbfields_.FieldAction.UPDATE
                         except Exception:
                             raise ErrorValidation(f"Error validating update of field '{field.fname}'.")
 
@@ -407,7 +407,7 @@ class _MigrateValidation:
         remove_models = []
         for model in self.migrate_models:
             if not model.action:
-                model.action = FieldAction.NOACTION
+                model.action = dbfields_.FieldAction.NOACTION
             for field in model.fields:
                 if not field.action:
                     remove_fields.append(field)
@@ -476,10 +476,10 @@ class _InsertMgrData:
         try:
             for i in self.migrations_dict:
                 for mgrmodel in self.migrations_dict[i]:
-                    if not mgrmodel.name in self._query.select_from(DefLogTable.flow_tables.value, 'tn'):
+                    if not mgrmodel.name in self._query.select_from(cfg.DefLogTable.flow_tables.value, 'tn'):
                         tn.append(mgrmodel.name)
                         sngtn = mgrmodel.name
-                        self._query.insert_data(DefLogTable.flow_tables.value, insert_values_to_str(
+                        self._query.insert_data(cfg.DefLogTable.flow_tables.value, insert_values_to_str(
                             tn=mgrmodel.name, action=mgrmodel.action.value))
         except Exception:
             raise ErrorAddingTableToLog(tablename=sngtn)
@@ -499,10 +499,10 @@ class _InsertMgrData:
                     for field in mgrmodel.fields:
                         curfields.append(field.fname)
                         sngfield = field.fname
-                        parent_table_id = self._query.select_from(DefLogTable.flow_tables.value, 'id', f"tn = '{mgrmodel.name}'")[0]
+                        parent_table_id = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id', f"tn = '{mgrmodel.name}'")[0]
                         field_values_dict = field_values_to_dict(field)
                         field_values_dict['parent_table'] = parent_table_id
-                        self._query.insert_data(DefLogTable.flow_fields.value, insert_values_to_str(**field_values_dict))
+                        self._query.insert_data(cfg.DefLogTable.flow_fields.value, insert_values_to_str(**field_values_dict))
         except Exception:
             raise ErrorAddingFieldToLog(fname=sngfield)
         finally:
@@ -519,19 +519,19 @@ class _InsertMgrData:
             if DbFMgrApplyLog().check_table_apply(mgr_filename):
                 for mgrmodel in self.migrations_dict[mgr_filename]:
                     match mgrmodel.action:
-                        case FieldAction.CREATE:
+                        case dbfields_.FieldAction.CREATE:
                             try:
-                                self._query.insert_data(DefLogTable.flow_tables.value, insert_values_to_str(tn=mgrmodel.name, action=FieldAction.CREATE.value))
+                                self._query.insert_data(cfg.DefLogTable.flow_tables.value, insert_values_to_str(tn=mgrmodel.name, action=dbfields_.FieldAction.CREATE.value))
                                 self._insert_mgrmodel_fields_log(mgrmodel, mgrmodel.fields)
                             except Exception:
                                 raise ErrorAddingTableToLog(tablename=mgrmodel.name)
                             finally:
                                 print(_migration_log(f" - ✔️ The '{mgrmodel.name}' table has been added to the log."))
-                        case FieldAction.NOACTION:
+                        case dbfields_.FieldAction.NOACTION:
                             # оновлення даних про поля таблиць.
                             self._insert_mgrmodel_fields_log(mgrmodel, mgrmodel.fields)
 
-    def _insert_mgrmodel_fields_log(self, mgrmodel: MigrateModel, fields: list[_Field]):
+    def _insert_mgrmodel_fields_log(self, mgrmodel: MigrateModel, fields: list[dbfields_._Field]):
         """
         Оновлення полів таблиць у логу.
 
@@ -543,13 +543,13 @@ class _InsertMgrData:
         isdeleted = False
         for field in fields:
             match field.action:
-                case FieldAction.CREATE:
+                case dbfields_.FieldAction.CREATE:
                     try:
                         field_dict = self._get_field_dict(mgrmodel, field)
                         if field_dict:
                             field_dict = field_dict[0]
-                            if field_dict and field_dict['action'] == FieldAction.DELETE.value:
-                                self._change_field_action(field_dict['id'], FieldAction.CREATE)
+                            if field_dict and field_dict['action'] == dbfields_.FieldAction.DELETE.value:
+                                self._change_field_action(field_dict['id'], dbfields_.FieldAction.CREATE)
                                 iscreated = True
                         else:
                             self.flow_fields_insert(mgrmodel, field)
@@ -559,7 +559,7 @@ class _InsertMgrData:
                     finally:
                         if iscreated:
                             print(_migration_log(f" -- ✔️ The '{field.fname}' field has been added to the log."))
-                case FieldAction.UPDATE:
+                case dbfields_.FieldAction.UPDATE:
                     try:
                         field_dict = self._get_field_dict(mgrmodel, field)[0]
                         field_values = field_values_to_dict(field)
@@ -567,10 +567,10 @@ class _InsertMgrData:
 
                         # якщо action = create нiчого не змiнюеться
                         if not field_dict['applystatus']:
-                            field_dict['action'] = FieldAction.CREATE.value
+                            field_dict['action'] = dbfields_.FieldAction.CREATE.value
                         else:
-                            field_dict['action'] = FieldAction.UPDATE.value
-                        self._query.update_data(DefLogTable.flow_fields.value, update_value_to_str(**field_dict),
+                            field_dict['action'] = dbfields_.FieldAction.UPDATE.value
+                        self._query.update_data(cfg.DefLogTable.flow_fields.value, update_value_to_str(**field_dict),
                                                 f"id = {field_dict['id']}")
                         isupdated = True
                     except Exception:
@@ -578,14 +578,14 @@ class _InsertMgrData:
                     finally:
                         if isupdated:
                             print(_migration_log(f" -- ✔️ The field '{field.fname}' was successfully updated in the log."))
-                case FieldAction.DELETE:
+                case dbfields_.FieldAction.DELETE:
                     try:
                         field_dict = self._get_field_dict(mgrmodel, field)[0]
                         if field_dict['applystatus']:
-                            self._change_field_action(field_dict['id'], FieldAction.DELETE)
+                            self._change_field_action(field_dict['id'], dbfields_.FieldAction.DELETE)
                             isdeleted = True
                         else:
-                            self._query.delete_field(DefLogTable.flow_fields.value, f"id={field_dict['id']}")
+                            self._query.delete_field(cfg.DefLogTable.flow_fields.value, f"id={field_dict['id']}")
                             isdeleted = True
                     except Exception:
                         raise ErrorDeleteFieldInLog(field.fname)
@@ -593,26 +593,26 @@ class _InsertMgrData:
                         if isdeleted:
                             print(_migration_log(f" -- ✔️ The field '{field.fname}' was successfully deleted in the log."))
 
-    def _get_field_dict(self, mgrmodel: MigrateModel, field: _Field) -> dict:
+    def _get_field_dict(self, mgrmodel: MigrateModel, field: dbfields_._Field) -> dict:
         """
         Перетворює дані MigrateModel у словник.
         """
-        parent_table_id = self._query.select_from(DefLogTable.flow_tables.value, 'id',
+        parent_table_id = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id',
                                                   f"tn = '{mgrmodel.name}'")[0]
-        field_dict: dict = self._query.select_from(DefLogTable.flow_fields.value, '*',
+        field_dict: dict = self._query.select_from(cfg.DefLogTable.flow_fields.value, '*',
                                                    f"`parent_table` = {parent_table_id} and "
                                                    f"fname = '{field.fname}'",
                                                    list_format=False, dictionary=True)
         return field_dict
 
-    def _change_field_action(self, fid: int, action: FieldAction):
-        self._query.update_data(DefLogTable.flow_fields.value, update_value_to_str(action=action.value), f"id={fid}")
+    def _change_field_action(self, fid: int, action: dbfields_.FieldAction):
+        self._query.update_data(cfg.DefLogTable.flow_fields.value, update_value_to_str(action=action.value), f"id={fid}")
 
-    def flow_fields_insert(self, mgrmodel: MigrateModel, field: _Field):
+    def flow_fields_insert(self, mgrmodel: MigrateModel, field: dbfields_._Field):
         """
         Створення нового поля у логу. Команда Create.
         """
-        parent_table_id = self._query.select_from(DefLogTable.flow_tables.value, 'id', f"tn = '{mgrmodel.name}'")[0]
+        parent_table_id = self._query.select_from(cfg.DefLogTable.flow_tables.value, 'id', f"tn = '{mgrmodel.name}'")[0]
         insert_values = {}
         fattrs = list(field.__dict__.keys())
         for attr in fattrs:
@@ -623,7 +623,7 @@ class _InsertMgrData:
             else:
                 insert_values[attr] = field.__dict__[attr]
         insert_values['parent_table'] = parent_table_id
-        self._query.insert_data(DefLogTable.flow_fields.value, insert_values_to_str(**insert_values))
+        self._query.insert_data(cfg.DefLogTable.flow_fields.value, insert_values_to_str(**insert_values))
 
     @staticmethod
     def delete_table(table: dict):
@@ -632,10 +632,10 @@ class _InsertMgrData:
         _query = DbQuery()
 
         if table['applystatus']:
-            _query.update_data(DefLogTable.flow_tables.value, update_value_to_str(action=FieldAction.DELETE.value),
+            _query.update_data(cfg.DefLogTable.flow_tables.value, update_value_to_str(action=dbfields_.FieldAction.DELETE.value),
                                     f"`id` = {table['id']}")
         else:
-            _query.delete_field(DefLogTable.flow_tables.value, f"`id` = {table['id']}")
+            _query.delete_field(cfg.DefLogTable.flow_tables.value, f"`id` = {table['id']}")
 
 
 class CreateMgrFramework:
@@ -647,14 +647,14 @@ class CreateMgrFramework:
 
         self.model = model
         if first_mgr:
-            self.model.action = FieldAction.CREATE
+            self.model.action = dbfields_.FieldAction.CREATE
         self.first_mgr = first_mgr
         self.filepath = filepath
         self.filename = filename
-        self.default_fields: list[_Field] = []
+        self.default_fields: list[dbfields_._Field] = []
         self._query = DbQuery()
 
-    def set_default_fields(self, fields: list[_Field]):
+    def set_default_fields(self, fields: list[dbfields_._Field]):
         for field in fields:
             self.default_fields.append(field)
         return self
@@ -663,9 +663,9 @@ class CreateMgrFramework:
         fields_str = ''
         for x, field in enumerate(self.default_fields):
             if x == 0:
-                fields_str += f"models2.{field.get_strbuild()}.set_fname('{field.fname}').set_action(models2.{field.action}),\n"
+                fields_str += f"fields.{field.get_strbuild()}.set_fname('{field.fname}').set_action(fields.{field.action}),\n"
             else:
-                fields_str += f"        models2.{field.get_strbuild()}.set_fname('{field.fname}').set_action(models2.{field.action}),\n"
+                fields_str += f"        fields.{field.get_strbuild()}.set_fname('{field.fname}').set_action(fields.{field.action}),\n"
         return fields_str
 
     def _get_model_fields(self):
@@ -673,25 +673,25 @@ class CreateMgrFramework:
         for x, field in enumerate(self.model.fields):
             if x == 0:
                 if self.first_mgr:
-                    fields_str += f"models2.{field.get_strbuild()}.set_fname('{field.fname}').set_action(models2.{FieldAction.CREATE}),\n"
+                    fields_str += f"fields.{field.get_strbuild()}.set_fname('{field.fname}').set_action(fields.{dbfields_.FieldAction.CREATE}),\n"
                 else:
-                    fields_str += f"models2.{field.get_strbuild()}.set_fname('{field.fname}').set_action(models2.{field.action}),\n"
+                    fields_str += f"fields.{field.get_strbuild()}.set_fname('{field.fname}').set_action(fields.{field.action}),\n"
             else:
                 if self.first_mgr:
-                    fields_str += f"\t\tmodels2.{field.get_strbuild()}.set_fname('{field.fname}').set_action(models2.{FieldAction.CREATE}),\n"
+                    fields_str += f"\t\tfields.{field.get_strbuild()}.set_fname('{field.fname}').set_action(fields.{dbfields_.FieldAction.CREATE}),\n"
                 else:
-                    fields_str += f"\t\tmodels2.{field.get_strbuild()}.set_fname('{field.fname}').set_action(models2.{field.action}),\n"
+                    fields_str += f"\t\tfields.{field.get_strbuild()}.set_fname('{field.fname}').set_action(fields.{field.action}),\n"
         return fields_str
 
-    def _build_str_migrate_model(self, model_name, default_fields: str, model_fields: str, action: FieldAction) -> str:
+    def _build_str_migrate_model(self, model_name, default_fields: str, model_fields: str, action: dbfields_.FieldAction) -> str:
         str_migrate_model = f"""\n
-class Mgr{model_name}(models2.MigrateModel):
+class Mgr{model_name}(models.MigrateModel):
     # simple table
 
     default_fields = [
         {default_fields}
     ]   
-    action = models2.{action}
+    action = fields.{action}
     name = '{model_name}'
     fields = [
         {model_fields}
@@ -704,7 +704,7 @@ class Mgr{model_name}(models2.MigrateModel):
             with open(self.filepath, 'a') as f:
                 # перевірка файла на пустоту
                 if os.stat(self.filepath).st_size == 0:
-                    f.write("from flow.database import models2\n")
+                    f.write("from flow.database.model import models, fields\n")
 
                 f.write(self._build_str_migrate_model(self.model.name, self._get_default_fields(),
                                                       self._get_model_fields(), self.model.action))
@@ -722,7 +722,7 @@ class DbFMgrApplyLog:
         self._query = DbQuery()
 
     def clear_table_data(self):
-        self._query.clear_table(DefLogTable.appaply.value)
+        self._query.clear_table(cfg.DefLogTable.appaply.value)
 
     def check_table_apply(self, filename: str) -> bool:
         """
@@ -741,13 +741,13 @@ class DbFMgrApplyLog:
         """
         Добавлення поля у таблицю _appaply.
         """
-        self._query.custom_query(f"INSERT INTO `{DefLogTable.appaply.value}` (`appname`, `filename`) VALUES ('{appname}', '{filename.split('.')[0]}')",
+        self._query.custom_query(f"INSERT INTO `{cfg.DefLogTable.appaply.value}` (`appname`, `filename`) VALUES ('{appname}', '{filename.split('.')[0]}')",
                                  dictionary=True)
 
     def _get_table_log(self) -> list:
-        return self._query.custom_query(f'SELECT * FROM `{DefLogTable.appaply.value}`', dictionary=True)
+        return self._query.custom_query(f'SELECT * FROM `{cfg.DefLogTable.appaply.value}`', dictionary=True)
 
-    def change_applystatus(self, table_name: DefLogTable, applystatus: bool, action: FieldAction, fid: int):
+    def change_applystatus(self, table_name: cfg.DefLogTable, applystatus: bool, action: dbfields_.FieldAction, fid: int):
         """
         Зміна статуса поля.
 
@@ -765,10 +765,10 @@ class DbFMgrApplyLog:
                                                         action=action.value), f"`id` = {fid}")
 
     def ffields_delete_field(self, field_id: int):
-        self._query.delete_field(DefLogTable.flow_fields.value, f"`id` = {field_id}")
+        self._query.delete_field(cfg.DefLogTable.flow_fields.value, f"`id` = {field_id}")
 
     def ftables_delete_field(self, field_id: int):
-        self._query.delete_field(DefLogTable.flow_tables.value, f"`id` = {field_id}")
+        self._query.delete_field(cfg.DefLogTable.flow_tables.value, f"`id` = {field_id}")
 
 
 class TableLog:
@@ -813,8 +813,8 @@ class ApplyMigrations:
         Отримання даних із лога.
         """
         log = []
-        tables = self._query.select_from(DefLogTable.flow_tables.value, '*', dictionary=True, list_format=False)
-        fields = self._query.select_from(DefLogTable.flow_fields.value, '*', dictionary=True, list_format=False)
+        tables = self._query.select_from(cfg.DefLogTable.flow_tables.value, '*', dictionary=True, list_format=False)
+        fields = self._query.select_from(cfg.DefLogTable.flow_fields.value, '*', dictionary=True, list_format=False)
         for table in tables:
             tfields = []
             for field in fields:
@@ -831,7 +831,7 @@ class ApplyMigrations:
         for table_log in tables_log_list:
             fields[table_log.table['tn']] = []
             for field in table_log.fields:
-                if field['action'] == FieldAction.NOACTION.value:
+                if field['action'] == dbfields_.FieldAction.NOACTION.value:
                     fields[table_log.table['tn']].append(field)
 
             if not table_log.fields and table_log.table['action'] != 0:
@@ -854,14 +854,14 @@ class ApplyMigrations:
         for table_log in self.tables_log_list:
             match table_log.table['action']:
                 # create table
-                case FieldAction.CREATE.value:
+                case dbfields_.FieldAction.CREATE.value:
                     tfields = []
                     for field in table_log.fields:
                         if field['parent_table'] == table_log.table['id']:
                             tfields.append(field)
                     self._create_table(table_log.table, tfields)
                 # fields actions
-                case FieldAction.NOACTION.value:
+                case dbfields_.FieldAction.NOACTION.value:
                     tfields = []
                     for field in table_log.fields:
                         if field['parent_table'] == table_log.table['id']:
@@ -870,26 +870,26 @@ class ApplyMigrations:
                         tn = table_log.table['tn']
                         match f['action']:
                             # create fields
-                            case FieldAction.CREATE.value:
+                            case dbfields_.FieldAction.CREATE.value:
                                 try:
                                     match f['ftype']:
-                                        case FieldType.FK.value:
+                                        case dbfields_.FieldType.FK.value:
                                             cfield = f.copy()
-                                            cfield['ftype'] = FieldType.INT.value
+                                            cfield['ftype'] = dbfields_.FieldType.INT.value
                                             self._query.create_column(tn, field_dict_to_sql(f))
                                             self.apply_fk(tn, cfield)
-                                            self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True, FieldAction.NOACTION,
+                                            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True, dbfields_.FieldAction.NOACTION,
                                                                             f['id'])
                                         case _:
                                             self._query.create_column(tn, field_dict_to_sql(f))
-                                            self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True, FieldAction.NOACTION,
+                                            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True, dbfields_.FieldAction.NOACTION,
                                                                                f['id'])
                                 except Exception as e:
                                     raise e
                                 finally:
                                     print(_migration_log(f" -- ✔ The field {f['fname']} was created in the table {tn}."))
                             # delete fields
-                            case FieldAction.DELETE.value:
+                            case dbfields_.FieldAction.DELETE.value:
                                 try:
                                     fk_name = self._query.show_fk_relation_name(f['fname'])
                                     if fk_name:
@@ -901,34 +901,34 @@ class ApplyMigrations:
                                 finally:
                                     print(_migration_log(f" -- ✔ The field {f['fname']} was deleted in the table {tn}."))
                             # update fields
-                            case FieldAction.UPDATE.value:
+                            case dbfields_.FieldAction.UPDATE.value:
                                 try:
                                     match f['ftype']:
-                                        case FieldType.FK.value:
+                                        case dbfields_.FieldType.FK.value:
                                             ufield = f.copy()
-                                            ufield['ftype'] = FieldType.INT.value
+                                            ufield['ftype'] = dbfields_.FieldType.INT.value
                                             self._query.update_table_attr(tn, ufield['fname'], field_dict_to_sql(ufield))
                                             if not self._query.show_fk_relation_name(f['fname']):
                                                 self.apply_fk(tn, ufield)
-                                            self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True,
-                                                                            FieldAction.NOACTION, f['id'])
+                                            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True,
+                                                                            dbfields_.FieldAction.NOACTION, f['id'])
                                         case _:
                                             fk_name = self._query.show_fk_relation_name(f['fname'])
                                             if fk_name:
                                                 self._query.delete_relation(tn, fk_name[0])
                                                 self._query.update_table_attr(tn, f['fname'], field_dict_to_sql(f))
-                                                self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True,
-                                                                                FieldAction.NOACTION, f['id'])
+                                                self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True,
+                                                                                dbfields_.FieldAction.NOACTION, f['id'])
                                             else:
                                                 self._query.update_table_attr(tn, f['fname'], field_dict_to_sql(f))
-                                                self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True,
-                                                                                FieldAction.NOACTION, f['id'])
+                                                self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True,
+                                                                                dbfields_.FieldAction.NOACTION, f['id'])
                                 except Exception as e:
                                     raise e
                                 finally:
                                     print(_migration_log(f" -- ✔ The field {f['fname']} was updated in the table {tn}."))
                 # delete tables
-                case FieldAction.DELETE.value:
+                case dbfields_.FieldAction.DELETE.value:
                     try:
                         self._query.delele_table(table_log.table['tn'])
                         self.dbapplylog.ftables_delete_field(table_log.table['id'])
@@ -957,7 +957,7 @@ class ApplyMigrations:
         try:
             # create table and dfields
             self._query.create_table(table['tn'], strfields)
-            self.dbapplylog.change_applystatus(DefLogTable.flow_tables, True, FieldAction.NOACTION, table['id'])
+            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_tables, True, dbfields_.FieldAction.NOACTION, table['id'])
         except Exception:
             raise CreationError(msg=f"Error creating table {table['tn']}")
         finally:
@@ -966,15 +966,15 @@ class ApplyMigrations:
             for field in fields:
                 try:
                     match field['ftype']:
-                        case FieldType.FK.value:
+                        case dbfields_.FieldType.FK.value:
                             # apply fk field
                             self._apply_fk_fields__create.append({table['tn']: field})
-                            self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True, FieldAction.NOACTION, field['id'])
-                        case FieldType.AUTOINCREMENT.value:
+                            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True, dbfields_.FieldAction.NOACTION, field['id'])
+                        case dbfields_.FieldType.AUTOINCREMENT.value:
                             self.apply_auto_field(table['tn'], field)
-                            self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True, FieldAction.NOACTION, field['id'])
+                            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True, dbfields_.FieldAction.NOACTION, field['id'])
                         case _:
-                            self.dbapplylog.change_applystatus(DefLogTable.flow_fields, True, FieldAction.NOACTION, field['id'])
+                            self.dbapplylog.change_applystatus(cfg.DefLogTable.flow_fields, True, dbfields_.FieldAction.NOACTION, field['id'])
                 except Exception:
                     raise CreationError(msg=f"Error creating field {field['fname']} in table {table['tn']}")
                 finally:
@@ -998,10 +998,10 @@ def field_dict_to_sql(field_dict: dict) -> str:
     field_dict = field_dict.copy()
     fstr = ''
     match field_dict['ftype']:
-        case FieldType.FK.value:
-            field_dict['ftype'] = FieldType.INT.value
-        case FieldType.AUTOINCREMENT.value:
-            field_dict['ftype'] = FieldType.INT.value
+        case dbfields_.FieldType.FK.value:
+            field_dict['ftype'] = dbfields_.FieldType.INT.value
+        case dbfields_.FieldType.AUTOINCREMENT.value:
+            field_dict['ftype'] = dbfields_.FieldType.INT.value
 
     if not field_dict['flength']:
         field_dict['flength'] = ''
@@ -1059,7 +1059,7 @@ def update_value_to_str(**kwargs) -> str:
     return values
 
 
-def field_values_to_dict(field: _Field) -> dict:
+def field_values_to_dict(field: dbfields_._Field) -> dict:
     fattrs = list(field.__dict__.keys())
     field_values = {}
     for attr in fattrs:

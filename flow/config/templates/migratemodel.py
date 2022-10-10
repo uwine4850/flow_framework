@@ -1,14 +1,14 @@
-class MigrateModel:
+#class MigrateModel:
     # simple table
 
     # TODO empty exceptions
-    default_fields = [
+#    default_fields = [
 
-    ]
-    name: str = ''
-    fields: list[_Field] = [
-        IntField('test')
-    ]
+#    ]
+#    name: str = ''
+#    fields: list[models._Field] = [
+#        models.IntField('test')
+#    ]
 
 
 class_name = ''

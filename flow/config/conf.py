@@ -1,4 +1,4 @@
-from flow.config.templates import fsettings, froute, models, views
+from flow.config import templates
 from fconfig.fsettings import DATABASE
 from dataclasses import dataclass
 from enum import Enum
@@ -12,13 +12,13 @@ class TemplateFile:
 
 
 PROJECT_FILES: list[TemplateFile] = [
-    TemplateFile('fconfig', 'fsettings.py', fsettings.__file__),
-    TemplateFile('fconfig', 'froute.py', froute.__file__),
+    TemplateFile('fconfig', 'fsettings.py', templates.fsettings.__file__),
+    TemplateFile('fconfig', 'froute.py', templates.froute.__file__),
 ]
 
 APP_FILES: list[TemplateFile] = [
-    TemplateFile('', 'models.py', models.__file__),
-    TemplateFile('', 'views.py', views.__file__),
+    TemplateFile('', 'models.py', templates.models.__file__),
+    TemplateFile('', 'views.py', templates.views.__file__),
     TemplateFile('', '__init__.py', ''),
 ]
 

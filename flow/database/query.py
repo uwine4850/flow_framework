@@ -1,5 +1,4 @@
 from flow.database.connector import DbConnector
-from flow.database.models import _Field
 
 
 class DbQuery:

@@ -5,7 +5,7 @@ from http.server import HTTPServer
 from flow.http.server import Server
 from fconfig.fsettings import SERVER_PORT, SERVER_HOST, APPS
 import importlib
-from flow.database.models2 import Model, Migrate, ApplyMigrations
+from flow.database.model.models import Model, Migrate, ApplyMigrations
 from typing import Type
 
 

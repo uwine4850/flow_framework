@@ -1,5 +1,4 @@
 import fire
-from flow.config.conf import PROJECT_FILES, APP_FILES
 import os
 from http.server import HTTPServer
 from flow.http.server import Server
@@ -11,7 +10,8 @@ from typing import Type
 
 class Command:
     def initproject(self):
-        for file in PROJECT_FILES:
+        from flow.config import conf
+        for file in conf.PROJECT_FILES:
             if not os.path.exists(file.dirname):
                 os.mkdir(file.dirname)
 
@@ -33,7 +33,8 @@ class Command:
         print("Server stopped.")
 
     def createapp(self, app_name: str):
-        for appfile in APP_FILES:
+        from flow.config import conf
+        for appfile in conf.APP_FILES:
             if not os.path.exists(app_name):
                 os.mkdir(app_name)
 

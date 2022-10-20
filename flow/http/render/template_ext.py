@@ -1,7 +1,7 @@
 from flow.http.render.templ_extension import BaseExtension
 from fconfig.fsettings import SOURCEFILES_PATH
 import os
-from fconfig.froute import routings
+import fconfig
 
 
 class FileExt(BaseExtension):
@@ -26,7 +26,7 @@ class UrlExt(BaseExtension):
     tags = ['url']
 
     def handler(self, pathname):
-        for url in routings:
+        for url in fconfig.froute.routings:
             if pathname == url.name:
                 return url.path
         raise 'Url not found.'

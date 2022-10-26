@@ -1,3 +1,5 @@
+import sys
+
 import fire
 import os
 from http.server import HTTPServer
@@ -6,6 +8,7 @@ from fconfig.fsettings import SERVER_PORT, SERVER_HOST, APPS
 import importlib
 from flow.database.model.models import Model, Migrate, ApplyMigrations
 from typing import Type
+from flow.utils.reloader import start_reloader
 
 
 class Command:
@@ -20,16 +23,22 @@ class Command:
                     with open(file.filepath, 'r') as sf:
                         f.write(sf.read())
 
-    def startserver(self):
-        web_server = HTTPServer((SERVER_HOST, SERVER_PORT), Server)
-        print(f"Server started http://{SERVER_HOST}:{SERVER_PORT}\nType ctrl+c to stoping.")
-
+    def startserver(self, reloader=False):
+        web_server = None
         try:
-            web_server.serve_forever()
+            if reloader:
+                start_reloader()
+                sys.exit()
+            else:
+                web_server = HTTPServer((SERVER_HOST, SERVER_PORT), Server)
+                print(f"Server started http://{SERVER_HOST}:{SERVER_PORT}\nType ctrl+c to stoping.")
+                web_server.serve_forever()
         except KeyboardInterrupt:
-            pass
+            if web_server:
+                web_server.server_close()
 
-        web_server.server_close()
+        if web_server:
+            web_server.server_close()
         print("Server stopped.")
 
     def createapp(self, app_name: str):

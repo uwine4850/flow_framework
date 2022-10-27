@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from flow.routing.route import Route, Url
 from flow.exceptions.http_exceptions import FormEnctypeError, MimetypeError
 
+import importlib
+
 
 MIMETYPES = {
     'text/html': 'html',
@@ -16,7 +18,10 @@ MIMETYPES = {
 
 
 class Server(CGIHTTPRequestHandler):
+    middlewares = []
+
     def do_GET(self):
+        self.get_middlewares()
         if self.path.rfind('.') != -1:
             mimetype = self._get_mimetype()
             path = self.path.split(Request.currurl)[-1]
@@ -28,6 +33,7 @@ class Server(CGIHTTPRequestHandler):
             self._route()
 
     def do_POST(self) -> None:
+        self.get_middlewares()
         ctype, pdict = cgi.parse_header(self.headers.get('Content-Type'))
         match ctype:
             case 'multipart/form-data':
@@ -74,12 +80,14 @@ class Server(CGIHTTPRequestHandler):
                 page_found = True
                 mimetype = self._get_mimetype()
                 Request.currurl = self.path
+                self.run_before_middlewares()
                 if slug_data:
                     Request.slug_data = {path_data.slug_f.strip('[').strip(']'): slug_data}
                     self._write_file(bytes(url.handler(request=Request, slug_value=slug_data), 'utf-8'), mimetype,
                                      url.code, url.header)
                 else:
                     self._write_file(bytes(url.handler(request=Request), 'utf-8'), mimetype, url.code, url.header)
+                self.run_after_middlewares()
         if not page_found:
             self.send_error(404, 'Page not found')
 
@@ -92,6 +100,7 @@ class Server(CGIHTTPRequestHandler):
                 redirect_url: Url = url.handler.post()
                 path_data, url_path, slug_data = self._parse_path(redirect_url)
                 Request.currurl = url_path
+                self.run_before_middlewares()
                 if slug_data:
                     Request.slug_data = {path_data.slug_f.strip('[').strip(']'): slug_data}
                     self._write_file(bytes(redirect_url.handler(request=Request, slug_value=slug_data), 'utf-8'), '',
@@ -99,6 +108,7 @@ class Server(CGIHTTPRequestHandler):
                 else:
                     self._write_file(bytes(redirect_url.handler(request=Request), 'utf-8'), '', redirect_url.code,
                                      redirect_url.header)
+                self.run_after_middlewares()
         if not page_found:
             self.send_error(404, 'Page not found')
 
@@ -111,6 +121,24 @@ class Server(CGIHTTPRequestHandler):
             slug_data = slug_data.split('/')[0]
             url_path = path_data.path.replace(path_data.slug_f, slug_data)
         return path_data, url_path, slug_data
+
+    def get_middlewares(self):
+        from flow.utils.middlewares import Middleware
+        for mddl_path in fconfig.fsettings.MIDDLEWARES_PATH:
+            for mddl_name in fconfig.fsettings.MIDDLEWARES:
+                if os.path.exists(os.path.join(mddl_path, mddl_name+'.py')):
+                    importlib.import_module(f'{mddl_path.replace("/", ".")}{mddl_name}')
+                    for i in Middleware.__subclasses__():
+                        if not i in self.middlewares:
+                            self.middlewares.append(i)
+
+    def run_before_middlewares(self):
+        for mddl in self.middlewares:
+            mddl(Request).before_request()
+
+    def run_after_middlewares(self):
+        for mddl in self.middlewares:
+            mddl(Request).after_request()
 
 
 @dataclass
@@ -150,6 +178,7 @@ class _Form:
 
 class Request:
     currurl = ''
+    url = ''
     response_code = 200
     slug_data = {}
 

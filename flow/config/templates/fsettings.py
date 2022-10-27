@@ -5,6 +5,11 @@ TEMPLATES_PATH = ['templates/']
 SOURCEFILES_PATH = ['source/']
 TEMPLATE_EXTENSION_RELATIVE_PATH = ['flow/http/render/']
 GLOBAL_OBJ_PATH = ['']
+MIDDLEWARES_PATH = ['']
+
+MIDDLEWARES = [
+
+]
 
 APPS = [
 

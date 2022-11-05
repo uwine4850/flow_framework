@@ -1,4 +1,5 @@
-from flow.http.server import Request
+from flow.http.request import Request
+from flow.routing.route import RedirectUrl
 
 
 class Middleware:
@@ -11,3 +12,9 @@ class Middleware:
 
     def before_request(self):
         pass
+
+    def redirect(self, urlname, slug_value=None):
+        if slug_value:
+            return RedirectUrl(urlname, slug_value=slug_value).redirect()
+        else:
+            return RedirectUrl(urlname).redirect()

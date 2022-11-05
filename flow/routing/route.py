@@ -4,12 +4,14 @@ from flow.exceptions.http_exceptions import RedirectError
 
 class Url:
     def __init__(self, path: str, handler, name: str, slug_value: str = None):
-        self.path = path
+        # self.path = path
+        self.path: _ParsePathData = Route.parse_path(path)
         self.handler = handler
         self.name = name
         self.slug_value = slug_value
         self.header = ()
         self.code = None
+        self.redirect: bool = False
 
 
 class RedirectUrl:
@@ -21,11 +23,17 @@ class RedirectUrl:
         self.u: Url = None
         for route in routings:
             if route.name == urlname:
-                self.u = Url(route.path, route.handler, route.name)
+                # path = Route.parse_path(route.path)
+                # self.u = Url(route.path, route.handler, route.name)
+                self.u = Url(route.path.path, route.handler, route.name)
+                # self.u.header = ('Content-type', '')
                 if 'slug_value' in kwargs.keys():
                     self.u.slug_value = kwargs['slug_value']
+                    self.u.header = ('Location', route.path.path.replace(route.path.slug_f, str(self.u.slug_value)))
+                else:
+                    self.u.header = ('Location', route.path.path)
                 self.u.code = 303
-                self.u.header = ('Location', route.path)
+                self.u.redirect = True
         if not self.u:
             raise RedirectError(urlname)
 
@@ -39,7 +47,7 @@ class Route:
     @classmethod
     def url(cls, path: str, handler, name: str) -> Url:
         u = Url(path, handler, name)
-        u.header = ('Content-type', '')
+        u.header = ('Content-type', 'a')
         u.code = 200
         return u
 
